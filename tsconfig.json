@@ -20,24 +20,36 @@
     ],
     "baseUrl": ".",
     "paths": {
+      // Main source paths
       "@/*": ["./src/*"],
       "@shared/*": ["./src/shared/*"],
       "@modules/*": ["./src/modules/*"],
+      
+      // Package paths
       "@db-types/*": ["./packages/db-types/*"],
       "@ui/*": ["./packages/ui/*"],
       "@config/*": ["./packages/config/*"],
+      
+      // Shared utility paths (more specific)
       "@utils/*": ["./src/shared/utils/*"],
       "@types/*": ["./src/shared/types/*"],
       "@constants/*": ["./src/shared/constants/*"],
       "@tests/*": ["./src/shared/tests/*"],
-      "@/config": ["./src/shared/config/index"],
+      
+      // Convenience paths for frequently used utilities (with fallback)
+      "@/config": ["./src/shared/config/index", "./src/shared/config"],
+      "@/environment": ["./src/shared/config/environment"],
       "@/auth": ["./src/shared/utils/auth"],
       "@/validation": ["./src/shared/utils/validation"],
       "@/errors": ["./src/shared/utils/errors"],
       "@/logging": ["./src/shared/utils/logging"],
       "@/cache": ["./src/shared/utils/cache"],
       "@/security": ["./src/shared/utils/security"],
-      "@/rate-limiting": ["./src/shared/utils/rate-limiting"]
+      "@/rate-limiting": ["./src/shared/utils/rate-limiting"],
+      
+      // Database types convenience path
+      "@/db-types": ["./packages/db-types"],
+      "@/db": ["./packages/db-types"]
     },
     "types": ["vitest/globals"],
     "forceConsistentCasingInFileNames": true,

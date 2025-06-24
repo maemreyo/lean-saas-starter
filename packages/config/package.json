@@ -3,45 +3,37 @@
   "version": "0.1.0",
   "private": true,
   "description": "Shared configuration utilities for Lean SaaS Starter",
-  "main": "./index.js",
+  "main": "./index.ts",
   "types": "./index.d.ts",
   "exports": {
     ".": {
       "types": "./index.d.ts",
-      "require": "./index.js",
-      "import": "./index.js"
+      "default": "./index.ts"
     },
     "./api": {
       "types": "./api.d.ts",
-      "require": "./api.js",
-      "import": "./api.js"
+      "default": "./api.ts"
     },
     "./environment": {
-      "types": "./environment.d.ts",
-      "require": "./environment.js",
-      "import": "./environment.js"
+      "types": "./environment.d.ts", 
+      "default": "./environment.ts"
     },
     "./billing": {
       "types": "./billing.d.ts",
-      "require": "./billing.js",
-      "import": "./billing.js"
+      "default": "./billing.ts"
     }
   },
   "files": [
-    "index.js",
-    "index.d.ts",
-    "api.js",
-    "api.d.ts", 
-    "environment.js",
-    "environment.d.ts",
-    "billing.js",
-    "billing.d.ts"
+    "*.ts",
+    "*.d.ts",
+    "*.js",
+    "README.md"
   ],
   "scripts": {
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc --noEmit",
-    "build": "tsc --build",
+    "build": "echo 'Config package uses TypeScript files directly'",
     "clean": "rimraf dist *.tsbuildinfo"
   },
   "dependencies": {
