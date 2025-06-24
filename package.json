@@ -1,0 +1,51 @@
+{
+  "name": "lean-saas-starter",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm build:backend && pnpm --parallel --stream dev",
+    "dev:full": "concurrently \"pnpm db:start\" \"pnpm functions:serve\" \"pnpm --filter web dev\"",
+    "build": "pnpm --filter \"./apps/*\" build",
+    "build:backend": "node scripts/sync-supabase.mjs",
+    
+    "db:start": "supabase start",
+    "db:stop": "supabase stop --no-backup",
+    "db:reset": "supabase db reset",
+    "db:push:prod": "supabase db push",
+    "db:types:generate": "supabase gen types typescript --project-id $(grep 'project_id' supabase/config.toml | cut -d '\"' -f 2) --schema public > packages/db-types/index.ts",
+    "db:seed:dev": "node scripts/seed-dev-data.mjs",
+    
+    "functions:serve": "supabase functions serve --no-verify-jwt",
+    "functions:deploy:prod": "supabase functions deploy",
+    "functions:new": "supabase functions new",
+    
+    "docs:generate": "node scripts/generate-api-docs.mjs",
+    "docs:serve": "npx http-server docs/generated -p 8080",
+    
+    "lint": "pnpm --filter \"./**/*\" lint",
+    "lint:fix": "pnpm lint --fix",
+    "format": "prettier --write .",
+    
+    "test": "vitest",
+    "test:integration:backend": "pnpm build:backend && pnpm db:reset && pnpm db:seed:dev && vitest run --dir src/modules",
+    "test:unit": "vitest run --dir src/shared",
+    
+    "typecheck": "pnpm --filter \"./**/*\" typecheck",
+    "health:check": "node scripts/health-check.mjs",
+    
+    "deploy:prod:backend": "echo '⚙️ Syncing backend modules...' && pnpm build:backend && echo '🚀 Deploying Supabase Backend...' && pnpm db:push:prod && pnpm functions:deploy:prod && echo '✅ Backend deployed!'",
+    
+    "clean:all": "rimraf node_modules '*/node_modules' '*/.next' '*/.turbo'",
+    "prepare": "husky install"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "concurrently": "^8.0.0",
+    "eslint": "^8.0.0",
+    "husky": "^8.0.0",
+    "prettier": "^3.0.0",
+    "rimraf": "^5.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^0.34.0"
+  }
+}
