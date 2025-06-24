@@ -5,15 +5,15 @@
   "type": "module",
   "description": "A production-ready starter kit for modern SaaS applications built with Supabase, Next.js, and TypeScript",
   "keywords": ["saas", "starter", "supabase", "nextjs", "typescript", "stripe", "api-first"],
-  "author": "Your Name <your.email@example.com>",
+  "author": "Htur Wehttam <matthew.ngo1114@gmail.com>",
   "license": "MIT",
-  "homepage": "https://github.com/yourusername/lean-saas-starter#readme",
+  "homepage": "https://github.com/maemreyo/lean-saas-starter#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/lean-saas-starter.git"
+    "url": "https://github.com/maemreyo/lean-saas-starter.git"
   },
   "bugs": {
-    "url": "https://github.com/yourusername/lean-saas-starter/issues"
+    "url": "https://github.com/maemreyo/lean-saas-starter/issues"
   },
   "engines": {
     "node": ">=18.0.0",
