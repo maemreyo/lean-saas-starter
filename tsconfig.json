@@ -1,19 +1,23 @@
 {
   "compilerOptions": {
-    "target": "es2020",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "esnext", "webworker"],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
-    "forceConsistentCasingInFileNames": true,
     "noEmit": true,
     "esModuleInterop": true,
     "module": "esnext",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "preserve",
     "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
@@ -21,9 +25,80 @@
       "@modules/*": ["./src/modules/*"],
       "@db-types/*": ["./packages/db-types/*"],
       "@ui/*": ["./packages/ui/*"],
-      "@config/*": ["./packages/config/*"]
-    }
+      "@config/*": ["./packages/config/*"],
+      "@utils/*": ["./src/shared/utils/*"],
+      "@types/*": ["./src/shared/types/*"],
+      "@constants/*": ["./src/shared/constants/*"],
+      "@tests/*": ["./src/shared/tests/*"],
+      "@/config": ["./src/shared/config/index"],
+      "@/auth": ["./src/shared/utils/auth"],
+      "@/validation": ["./src/shared/utils/validation"],
+      "@/errors": ["./src/shared/utils/errors"],
+      "@/logging": ["./src/shared/utils/logging"],
+      "@/cache": ["./src/shared/utils/cache"],
+      "@/security": ["./src/shared/utils/security"],
+      "@/rate-limiting": ["./src/shared/utils/rate-limiting"]
+    },
+    "types": ["vitest/globals"],
+    "forceConsistentCasingInFileNames": true,
+    "allowSyntheticDefaultImports": true,
+    "verbatimModuleSyntax": false,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "removeComments": false,
+    "importsNotUsedAsValues": "remove",
+    "allowUnusedLabels": false,
+    "allowUnreachableCode": false,
+    "exactOptionalPropertyTypes": false,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noPropertyAccessFromIndexSignature": false,
+    "noUncheckedIndexedAccess": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "checkJs": false
   },
-  "include": ["**/*.ts", "**/*.tsx"],
-  "exclude": ["node_modules", "supabase/_internal"]
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "**/*.js",
+    "**/*.jsx",
+    ".next/types/**/*.ts",
+    "src/**/*",
+    "packages/**/*",
+    "apps/**/*",
+    "scripts/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "build",
+    ".next",
+    ".turbo",
+    "coverage",
+    "test-results",
+    "docs/generated",
+    "supabase/_internal",
+    "packages/db-types/index.ts"
+  ],
+  "references": [
+    {
+      "path": "./apps/web"
+    },
+    {
+      "path": "./packages/ui"
+    },
+    {
+      "path": "./packages/config"
+    },
+    {
+      "path": "./packages/db-types"
+    }
+  ],
+  "ts-node": {
+    "esm": true,
+    "experimentalSpecifierResolution": "node"
+  }
 }
