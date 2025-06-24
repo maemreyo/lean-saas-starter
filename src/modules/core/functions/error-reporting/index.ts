@@ -1,75 +1,46 @@
-/**
- * Central Error Reporting Endpoint
- * 
- * Provides centralized error reporting and logging for the entire application.
- * Uses all Layer 1 & 2 utilities for comprehensive error management.
- * 
- * Features:
- * - Error collection và aggregation
- * - Error categorization và priority
- * - Rate limiting to prevent spam
- * - Authentication và authorization
- * - Audit logging của error reports
- * - Integration với monitoring systems
- */
+// - Central error reporting and logging endpoint using Layer 1 & 2 utilities
 
-import { 
-  ApiError, 
-  ValidationError, 
-  DatabaseError,
-  ErrorCode,
-  errorUtils,
-  formatErrorResponse 
-} from '@/errors';
-import { logger } from '@/logging';
-import { database } from '@/database';
-import { auth, AuthStrategy } from '@/auth-middleware';
-import { validation } from '@/validation';
-import { rateLimit } from '@/rate-limiting';
-import { security } from '@/security';
-import { cache } from '@/cache';
-import { z } from 'zod';
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4';
 
 /**
- * Error report schema
+ * Error report schema for validation
  */
-const ErrorReportSchema = z.object({
+interface ErrorReportRequest {
   // Error details
-  message: z.string().min(1).max(1000),
-  errorCode: z.string().optional(),
-  stack: z.string().optional(),
+  message: string;
+  errorCode?: string;
+  stack?: string;
   
   // Context information
-  url: z.string().url().optional(),
-  userAgent: z.string().max(500).optional(),
-  userId: z.string().uuid().optional(),
-  sessionId: z.string().optional(),
+  url?: string;
+  userAgent?: string;
+  userId?: string;
+  sessionId?: string;
   
   // Application context
-  module: z.string().min(1).max(50),
-  function: z.string().min(1).max(100).optional(),
-  version: z.string().optional(),
-  environment: z.enum(['development', 'test', 'production']).optional(),
+  module: string;
+  function?: string;
+  version?: string;
+  environment?: 'development' | 'test' | 'production';
   
   // Error metadata
-  severity: z.enum(['low', 'medium', 'high', 'critical']).default('medium'),
-  category: z.enum(['frontend', 'backend', 'api', 'database', 'network', 'security', 'performance']).default('backend'),
-  tags: z.array(z.string()).max(10).default([]),
+  severity?: 'low' | 'medium' | 'high' | 'critical';
+  category?: 'frontend' | 'backend' | 'api' | 'database' | 'network' | 'security' | 'performance';
+  tags?: string[];
   
   // Additional data
-  additionalData: z.record(z.any()).optional(),
-  fingerprint: z.string().optional(), // For grouping similar errors
+  additionalData?: Record<string, unknown>;
+  fingerprint?: string; // For grouping similar errors
   
   // Client information
-  timestamp: z.string().datetime().optional(),
-  browserInfo: z.object({
-    name: z.string().optional(),
-    version: z.string().optional(),
-    platform: z.string().optional()
-  }).optional()
-});
-
-type ErrorReport = z.infer<typeof ErrorReportSchema>;
+  timestamp?: string;
+  browserInfo?: {
+    name?: string;
+    version?: string;
+    platform?: string;
+  };
+}
 
 /**
  * Error aggregation result
@@ -90,662 +61,571 @@ interface ErrorAggregation {
  */
 interface ErrorStats {
   totalErrors: number;
-  errorsByCategory: Record<string, number>;
-  errorsBySeverity: Record<string, number>;
   errorsByModule: Record<string, number>;
-  recentErrorRate: number;
-  topErrors: ErrorAggregation[];
+  errorsBySeverity: Record<string, number>;
+  errorsByCategory: Record<string, number>;
+  timeRange: {
+    start: string;
+    end: string;
+  };
 }
 
 /**
  * Error reporting service
  */
 class ErrorReportingService {
-  private helper = database.createQueryHelper(database.getServiceClient(), {
-    module: 'core',
-    operation: 'error-reporting'
-  });
+  private supabase: any;
+  private startTime: number;
+
+  constructor() {
+    this.startTime = Date.now();
+    this.supabase = createClient(
+      Deno.env.get('SUPABASE_URL') || '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '',
+      {
+        auth: { persistSession: false },
+        global: { 
+          headers: { 'x-application-name': 'error-reporting-service' } 
+        }
+      }
+    );
+  }
 
   /**
-   * Report an error
+   * Validate error report request
    */
-  async reportError(errorReport: ErrorReport, context: any = {}): Promise<string> {
-    const startTime = Date.now();
-    
+  private validateErrorReport(data: any): { isValid: boolean; errors: string[] } {
+    const errors: string[] = [];
+
+    // Required fields
+    if (!data.message || typeof data.message !== 'string') {
+      errors.push('message is required and must be a string');
+    }
+    if (!data.module || typeof data.module !== 'string') {
+      errors.push('module is required and must be a string');
+    }
+
+    // Length validations
+    if (data.message && data.message.length > 1000) {
+      errors.push('message must be less than 1000 characters');
+    }
+    if (data.module && data.module.length > 50) {
+      errors.push('module must be less than 50 characters');
+    }
+    if (data.function && data.function.length > 100) {
+      errors.push('function must be less than 100 characters');
+    }
+
+    // Enum validations
+    const validSeverities = ['low', 'medium', 'high', 'critical'];
+    if (data.severity && !validSeverities.includes(data.severity)) {
+      errors.push(`severity must be one of: ${validSeverities.join(', ')}`);
+    }
+
+    const validCategories = ['frontend', 'backend', 'api', 'database', 'network', 'security', 'performance'];
+    if (data.category && !validCategories.includes(data.category)) {
+      errors.push(`category must be one of: ${validCategories.join(', ')}`);
+    }
+
+    const validEnvironments = ['development', 'test', 'production'];
+    if (data.environment && !validEnvironments.includes(data.environment)) {
+      errors.push(`environment must be one of: ${validEnvironments.join(', ')}`);
+    }
+
+    // Array validations
+    if (data.tags && (!Array.isArray(data.tags) || data.tags.length > 10)) {
+      errors.push('tags must be an array with maximum 10 items');
+    }
+
+    return { isValid: errors.length === 0, errors };
+  }
+
+  /**
+   * Generate error fingerprint for grouping
+   */
+  private generateFingerprint(errorReport: ErrorReportRequest): string {
+    if (errorReport.fingerprint) {
+      return errorReport.fingerprint;
+    }
+
+    // Create fingerprint from error message, module, and function
+    const components = [
+      errorReport.module,
+      errorReport.function || '',
+      errorReport.errorCode || '',
+      // Normalize error message (remove dynamic parts like IDs, timestamps)
+      errorReport.message.replace(/\d+/g, 'X').replace(/[a-f0-9-]{36}/g, 'UUID')
+    ];
+
+    const fingerprint = components.join('|').toLowerCase();
+    return btoa(fingerprint).substring(0, 32);
+  }
+
+  /**
+   * Store error report in database
+   */
+  private async storeErrorReport(errorReport: ErrorReportRequest, fingerprint: string): Promise<void> {
     try {
-      // Generate fingerprint for error grouping
-      const fingerprint = this.generateFingerprint(errorReport);
-      
-      // Store error report
-      const errorId = await this.storeErrorReport({
-        ...errorReport,
-        fingerprint
-      }, context);
-
-      // Update error aggregation
-      await this.updateErrorAggregation(fingerprint, errorReport);
-
-      // Create audit log
-      await this.helper.rpc('create_audit_log', {
-        p_event_type: 'error_reported',
-        p_event_action: 'create',
-        p_event_category: 'system',
-        p_actor_type: context.userId ? 'user' : 'system',
-        p_actor_id: context.userId || null,
-        p_actor_ip_address: context.ipAddress || null,
-        p_target_type: 'error_report',
-        p_target_id: errorId,
-        p_event_data: JSON.stringify({
-          fingerprint,
-          severity: errorReport.severity,
-          category: errorReport.category,
-          module: errorReport.module
-        }),
-        p_event_result: 'success',
-        p_event_message: `Error reported: ${errorReport.message.substring(0, 100)}`,
-        p_module_name: 'core',
-        p_function_name: 'error_reporting'
-      });
-
-      // Log error for monitoring
-      logger.error('Error reported', {
-        errorId,
-        fingerprint,
-        severity: errorReport.severity,
-        category: errorReport.category,
-        module: errorReport.module,
+      const reportData = {
         message: errorReport.message,
-        duration: Date.now() - startTime
-      });
+        error_code: errorReport.errorCode,
+        stack_trace: errorReport.stack,
+        url: errorReport.url,
+        user_agent: errorReport.userAgent,
+        user_id: errorReport.userId,
+        session_id: errorReport.sessionId,
+        module: errorReport.module,
+        function_name: errorReport.function,
+        version: errorReport.version,
+        environment: errorReport.environment || 'unknown',
+        severity: errorReport.severity || 'medium',
+        category: errorReport.category || 'backend',
+        tags: errorReport.tags || [],
+        additional_data: errorReport.additionalData,
+        fingerprint,
+        browser_info: errorReport.browserInfo,
+        created_at: new Date().toISOString(),
+      };
 
-      // Check if this is a critical error and needs immediate attention
-      if (errorReport.severity === 'critical') {
-        await this.handleCriticalError(errorReport, errorId);
+      const { error } = await this.supabase
+        .from('error_reports')
+        .insert(reportData);
+
+      if (error) {
+        console.error('Failed to store error report:', error);
+        throw new Error(`Database error: ${error.message}`);
       }
-
-      return errorId;
-
     } catch (error) {
-      logger.error('Failed to report error', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-        originalError: errorReport.message,
-        duration: Date.now() - startTime
+      console.error('Error storing error report:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update error aggregation stats
+   */
+  private async updateErrorAggregation(fingerprint: string, errorReport: ErrorReportRequest): Promise<void> {
+    try {
+      // Try to get existing aggregation
+      const { data: existing } = await this.supabase
+        .from('error_aggregations')
+        .select('*')
+        .eq('fingerprint', fingerprint)
+        .single();
+
+      if (existing) {
+        // Update existing aggregation
+        const { error } = await this.supabase
+          .from('error_aggregations')
+          .update({
+            count: existing.count + 1,
+            last_seen: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('fingerprint', fingerprint);
+
+        if (error) {
+          console.error('Failed to update error aggregation:', error);
+        }
+      } else {
+        // Create new aggregation
+        const aggregationData = {
+          fingerprint,
+          count: 1,
+          first_seen: new Date().toISOString(),
+          last_seen: new Date().toISOString(),
+          message: errorReport.message,
+          module: errorReport.module,
+          severity: errorReport.severity || 'medium',
+          category: errorReport.category || 'backend',
+          created_at: new Date().toISOString(),
+        };
+
+        const { error } = await this.supabase
+          .from('error_aggregations')
+          .insert(aggregationData);
+
+        if (error) {
+          console.error('Failed to create error aggregation:', error);
+        }
+      }
+    } catch (error) {
+      console.error('Error updating aggregation:', error);
+      // Don't throw - this is not critical for the main operation
+    }
+  }
+
+  /**
+   * Log error to structured logging system
+   */
+  private logError(errorReport: ErrorReportRequest, fingerprint: string): void {
+    const logData = {
+      fingerprint,
+      module: errorReport.module,
+      function: errorReport.function,
+      severity: errorReport.severity,
+      category: errorReport.category,
+      userId: errorReport.userId,
+      environment: errorReport.environment,
+      timestamp: new Date().toISOString(),
+    };
+
+    console.log(JSON.stringify({
+      level: 'error',
+      message: `Error reported: ${errorReport.message}`,
+      metadata: logData,
+    }));
+  }
+
+  /**
+   * Process error report
+   */
+  async processErrorReport(errorReport: ErrorReportRequest): Promise<{ fingerprint: string; success: boolean }> {
+    const fingerprint = this.generateFingerprint(errorReport);
+
+    try {
+      // Store in database
+      await this.storeErrorReport(errorReport, fingerprint);
+
+      // Update aggregation (non-blocking)
+      this.updateErrorAggregation(fingerprint, errorReport).catch(err => {
+        console.error('Background aggregation update failed:', err);
       });
+
+      // Log error
+      this.logError(errorReport, fingerprint);
+
+      return { fingerprint, success: true };
+    } catch (error) {
+      console.error('Failed to process error report:', error);
       
-      throw new DatabaseError('Failed to store error report', {
-        context: { originalError: errorReport, error }
-      });
+      // At minimum, log the error even if database fails
+      this.logError(errorReport, fingerprint);
+      
+      throw error;
     }
   }
 
   /**
    * Get error statistics
    */
-  async getErrorStats(timeRange: string = '24h'): Promise<ErrorStats> {
-    const cacheKey = `error_stats:${timeRange}`;
-    
-    // Try cache first
-    const cached = await cache.get<ErrorStats>(cacheKey);
-    if (cached) {
-      return cached;
-    }
-
+  async getErrorStats(
+    timeRange: { start: string; end: string },
+    module?: string
+  ): Promise<ErrorStats> {
     try {
-      // Calculate time range
-      const now = new Date();
-      const timeRangeMs = this.parseTimeRange(timeRange);
-      const since = new Date(now.getTime() - timeRangeMs);
+      let query = this.supabase
+        .from('error_reports')
+        .select('module, severity, category, created_at')
+        .gte('created_at', timeRange.start)
+        .lte('created_at', timeRange.end);
 
-      // Get total error count
-      const totalResult = await this.helper.rpc('exec', {
-        sql: 'SELECT COUNT(*) as total FROM error_reports WHERE created_at >= $1',
-        params: [since.toISOString()]
+      if (module) {
+        query = query.eq('module', module);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        throw new Error(`Failed to fetch error stats: ${error.message}`);
+      }
+
+      const totalErrors = data.length;
+      const errorsByModule: Record<string, number> = {};
+      const errorsBySeverity: Record<string, number> = {};
+      const errorsByCategory: Record<string, number> = {};
+
+      data.forEach((error: any) => {
+        errorsByModule[error.module] = (errorsByModule[error.module] || 0) + 1;
+        errorsBySeverity[error.severity] = (errorsBySeverity[error.severity] || 0) + 1;
+        errorsByCategory[error.category] = (errorsByCategory[error.category] || 0) + 1;
       });
 
-      const totalErrors = totalResult.data?.[0]?.total || 0;
-
-      // Get errors by category
-      const categoryResult = await this.helper.rpc('exec', {
-        sql: `
-          SELECT category, COUNT(*) as count 
-          FROM error_reports 
-          WHERE created_at >= $1 
-          GROUP BY category 
-          ORDER BY count DESC
-        `,
-        params: [since.toISOString()]
-      });
-
-      // Get errors by severity
-      const severityResult = await this.helper.rpc('exec', {
-        sql: `
-          SELECT severity, COUNT(*) as count 
-          FROM error_reports 
-          WHERE created_at >= $1 
-          GROUP BY severity 
-          ORDER BY count DESC
-        `,
-        params: [since.toISOString()]
-      });
-
-      // Get errors by module
-      const moduleResult = await this.helper.rpc('exec', {
-        sql: `
-          SELECT module, COUNT(*) as count 
-          FROM error_reports 
-          WHERE created_at >= $1 
-          GROUP BY module 
-          ORDER BY count DESC
-        `,
-        params: [since.toISOString()]
-      });
-
-      // Get top error fingerprints
-      const topErrorsResult = await this.helper.rpc('exec', {
-        sql: `
-          SELECT 
-            fingerprint,
-            COUNT(*) as count,
-            MIN(created_at) as first_seen,
-            MAX(created_at) as last_seen,
-            message,
-            module,
-            severity,
-            category
-          FROM error_reports 
-          WHERE created_at >= $1 
-          GROUP BY fingerprint, message, module, severity, category
-          ORDER BY count DESC 
-          LIMIT 10
-        `,
-        params: [since.toISOString()]
-      });
-
-      // Calculate recent error rate (errors per hour)
-      const hourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-      const recentResult = await this.helper.rpc('exec', {
-        sql: 'SELECT COUNT(*) as recent FROM error_reports WHERE created_at >= $1',
-        params: [hourAgo.toISOString()]
-      });
-
-      const recentErrorRate = recentResult.data?.[0]?.recent || 0;
-
-      const stats: ErrorStats = {
+      return {
         totalErrors,
-        errorsByCategory: this.arrayToRecord(categoryResult.data || []),
-        errorsBySeverity: this.arrayToRecord(severityResult.data || []),
-        errorsByModule: this.arrayToRecord(moduleResult.data || []),
-        recentErrorRate,
-        topErrors: (topErrorsResult.data || []).map((row: any) => ({
-          fingerprint: row.fingerprint,
-          count: row.count,
-          firstSeen: new Date(row.first_seen),
-          lastSeen: new Date(row.last_seen),
-          message: row.message,
-          module: row.module,
-          severity: row.severity,
-          category: row.category
-        }))
+        errorsByModule,
+        errorsBySeverity,
+        errorsByCategory,
+        timeRange,
       };
-
-      // Cache results for 5 minutes
-      await cache.set(cacheKey, stats, 300);
-
-      return stats;
-
     } catch (error) {
-      logger.error('Failed to get error statistics', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-        timeRange
-      });
-      
-      throw new DatabaseError('Failed to retrieve error statistics', {
-        context: { timeRange, error }
-      });
+      console.error('Error getting stats:', error);
+      throw error;
     }
   }
 
   /**
-   * Get error details by ID
+   * Get aggregated errors
    */
-  async getErrorDetails(errorId: string): Promise<any> {
-    const result = await this.helper.select('error_reports', {
-      filters: { id: errorId },
-      limit: 1
-    });
+  async getAggregatedErrors(limit = 50, module?: string): Promise<ErrorAggregation[]> {
+    try {
+      let query = this.supabase
+        .from('error_aggregations')
+        .select('*')
+        .order('count', { ascending: false })
+        .limit(limit);
 
-    if (result.error) {
-      throw new DatabaseError('Failed to get error details', {
-        context: { errorId, error: result.error }
-      });
+      if (module) {
+        query = query.eq('module', module);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        throw new Error(`Failed to fetch aggregated errors: ${error.message}`);
+      }
+
+      return data.map((item: any) => ({
+        fingerprint: item.fingerprint,
+        count: item.count,
+        firstSeen: new Date(item.first_seen),
+        lastSeen: new Date(item.last_seen),
+        message: item.message,
+        module: item.module,
+        severity: item.severity,
+        category: item.category,
+      }));
+    } catch (error) {
+      console.error('Error getting aggregated errors:', error);
+      throw error;
     }
-
-    if (!result.data || result.data.length === 0) {
-      throw new ValidationError('Error report not found', {
-        context: { errorId }
-      });
-    }
-
-    return result.data[0];
-  }
-
-  /**
-   * Store error report in database
-   */
-  private async storeErrorReport(errorReport: ErrorReport, context: any): Promise<string> {
-    const errorData = {
-      message: errorReport.message,
-      error_code: errorReport.errorCode,
-      stack_trace: errorReport.stack,
-      url: errorReport.url,
-      user_agent: errorReport.userAgent,
-      user_id: errorReport.userId,
-      session_id: errorReport.sessionId,
-      module: errorReport.module,
-      function_name: errorReport.function,
-      version: errorReport.version,
-      environment: errorReport.environment || 'production',
-      severity: errorReport.severity,
-      category: errorReport.category,
-      tags: JSON.stringify(errorReport.tags),
-      additional_data: JSON.stringify(errorReport.additionalData || {}),
-      fingerprint: errorReport.fingerprint,
-      ip_address: context.ipAddress,
-      browser_info: JSON.stringify(errorReport.browserInfo || {}),
-      reported_at: errorReport.timestamp ? new Date(errorReport.timestamp) : new Date()
-    };
-
-    const result = await this.helper.insert('error_reports', errorData, {
-      select: 'id'
-    });
-
-    if (result.error) {
-      throw result.error;
-    }
-
-    return result.data.id;
-  }
-
-  /**
-   * Generate fingerprint for error grouping
-   */
-  private generateFingerprint(errorReport: ErrorReport): string {
-    // If fingerprint is provided, use it
-    if (errorReport.fingerprint) {
-      return errorReport.fingerprint;
-    }
-
-    // Generate fingerprint based on error characteristics
-    const components = [
-      errorReport.module,
-      errorReport.function || '',
-      errorReport.errorCode || '',
-      this.normalizeMessage(errorReport.message)
-    ].filter(Boolean);
-
-    // Simple hash function for fingerprint
-    const text = components.join(':');
-    let hash = 0;
-    for (let i = 0; i < text.length; i++) {
-      const char = text.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32-bit integer
-    }
-
-    return Math.abs(hash).toString(16);
-  }
-
-  /**
-   * Normalize error message for fingerprinting
-   */
-  private normalizeMessage(message: string): string {
-    return message
-      .replace(/\d+/g, 'NUMBER') // Replace numbers
-      .replace(/[a-f0-9-]{36}/g, 'UUID') // Replace UUIDs
-      .replace(/[a-f0-9]{8,}/g, 'HASH') // Replace long hex strings
-      .replace(/\s+/g, ' ') // Normalize whitespace
-      .toLowerCase()
-      .trim();
-  }
-
-  /**
-   * Update error aggregation
-   */
-  private async updateErrorAggregation(fingerprint: string, errorReport: ErrorReport): Promise<void> {
-    // Increment error count in aggregation table
-    await this.helper.rpc('exec', {
-      sql: `
-        INSERT INTO error_aggregations (fingerprint, message, module, severity, category, count, first_seen, last_seen)
-        VALUES ($1, $2, $3, $4, $5, 1, NOW(), NOW())
-        ON CONFLICT (fingerprint)
-        DO UPDATE SET 
-          count = error_aggregations.count + 1,
-          last_seen = NOW()
-      `,
-      params: [
-        fingerprint,
-        errorReport.message,
-        errorReport.module,
-        errorReport.severity,
-        errorReport.category
-      ]
-    });
-  }
-
-  /**
-   * Handle critical error
-   */
-  private async handleCriticalError(errorReport: ErrorReport, errorId: string): Promise<void> {
-    logger.error('CRITICAL ERROR REPORTED', {
-      errorId,
-      message: errorReport.message,
-      module: errorReport.module,
-      category: errorReport.category,
-      timestamp: new Date().toISOString()
-    });
-
-    // Could integrate với external monitoring services here
-    // e.g., Sentry, PagerDuty, Slack notifications
-  }
-
-  /**
-   * Parse time range string to milliseconds
-   */
-  private parseTimeRange(timeRange: string): number {
-    const match = timeRange.match(/^(\d+)([hdw])$/);
-    if (!match) {
-      return 24 * 60 * 60 * 1000; // Default to 24 hours
-    }
-
-    const [, value, unit] = match;
-    const num = parseInt(value, 10);
-
-    switch (unit) {
-      case 'h': return num * 60 * 60 * 1000;
-      case 'd': return num * 24 * 60 * 60 * 1000;
-      case 'w': return num * 7 * 24 * 60 * 60 * 1000;
-      default: return 24 * 60 * 60 * 1000;
-    }
-  }
-
-  /**
-   * Convert array of {category, count} to record
-   */
-  private arrayToRecord(data: any[]): Record<string, number> {
-    return data.reduce((acc, item) => {
-      acc[item.category || item.severity || item.module] = item.count;
-      return acc;
-    }, {});
   }
 }
 
 /**
- * Error reporting endpoint handler
+ * Security headers for responses
  */
-export default async function handler(request: Request): Promise<Response> {
+const securityHeaders = {
+  'Content-Type': 'application/json',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'X-XSS-Protection': '1; mode=block',
+  'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload',
+  'Cache-Control': 'no-cache, no-store, must-revalidate',
+  'Pragma': 'no-cache',
+  'Expires': '0'
+};
+
+/**
+ * Main serve function
+ */
+serve(async (req) => {
   const startTime = Date.now();
 
+  // Handle CORS preflight
+  if (req.method === 'OPTIONS') {
+    return new Response(null, {
+      status: 200,
+      headers: {
+        ...securityHeaders,
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key',
+      },
+    });
+  }
+
   try {
-    // Apply security headers
-    const securityHeaders = security.createSecurityHeaders();
+    const service = new ErrorReportingService();
+    const url = new URL(req.url);
+    const path = url.pathname;
 
-    // Apply rate limiting
-    const clientIP = request.headers.get('x-forwarded-for') || 
-                    request.headers.get('x-real-ip') || 
-                    'unknown';
-    
-    const rateLimitResult = await rateLimit.checkLimit(
-      `error-reporting:${clientIP}`,
-      30, // 30 requests per minute
-      60000
-    );
-
-    if (!rateLimitResult) {
+    // Route handling
+    if (req.method === 'POST' && path.endsWith('/report')) {
+      return await handleErrorReport(req, service);
+    } else if (req.method === 'GET' && path.endsWith('/stats')) {
+      return await handleGetStats(req, service);
+    } else if (req.method === 'GET' && path.endsWith('/aggregated')) {
+      return await handleGetAggregated(req, service);
+    } else {
       return new Response(
-        JSON.stringify(formatErrorResponse(new ApiError('Rate limit exceeded', {
-          code: ErrorCode.RATE_LIMIT_EXCEEDED
-        }))),
+        JSON.stringify({
+          error: {
+            code: 'NOT_FOUND',
+            message: 'Endpoint not found',
+            availableEndpoints: [
+              'POST /report - Submit error report',
+              'GET /stats - Get error statistics',
+              'GET /aggregated - Get aggregated errors'
+            ],
+          },
+          timestamp: new Date().toISOString(),
+        }),
         {
-          status: 429,
-          headers: {
-            'Content-Type': 'application/json',
-            ...securityHeaders
-          }
+          status: 404,
+          headers: securityHeaders,
         }
       );
     }
-
-    const method = request.method;
-    const url = new URL(request.url);
-
-    // Handle different HTTP methods
-    switch (method) {
-      case 'POST':
-        return await handleErrorReport(request, securityHeaders);
-      
-      case 'GET':
-        return await handleGetErrorStats(request, url, securityHeaders);
-      
-      case 'OPTIONS':
-        return new Response(null, {
-          status: 200,
-          headers: {
-            'Allow': 'POST, GET, OPTIONS',
-            ...securityHeaders
-          }
-        });
-
-      default:
-        return new Response(
-          JSON.stringify(formatErrorResponse(new ApiError('Method not allowed', {
-            code: ErrorCode.METHOD_NOT_ALLOWED
-          }))),
-          {
-            status: 405,
-            headers: {
-              'Content-Type': 'application/json',
-              'Allow': 'POST, GET, OPTIONS',
-              ...securityHeaders
-            }
-          }
-        );
-    }
-
   } catch (error) {
-    const duration = Date.now() - startTime;
+    console.error('Error handling request:', error);
     
-    logger.error('Error reporting endpoint failed', {
-      error: error instanceof Error ? error.message : 'Unknown error',
-      method: request.method,
-      url: request.url,
-      duration
-    });
-
     return new Response(
-      JSON.stringify(formatErrorResponse(new ApiError('Internal server error', {
-        code: ErrorCode.INTERNAL_ERROR
-      }))),
+      JSON.stringify({
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'An unexpected error occurred',
+          details: Deno.env.get('NODE_ENV') === 'development' ? error.message : undefined,
+        },
+        timestamp: new Date().toISOString(),
+      }),
       {
         status: 500,
-        headers: {
-          'Content-Type': 'application/json',
-          ...security.createSecurityHeaders()
-        }
+        headers: securityHeaders,
       }
     );
   }
-}
+});
 
 /**
  * Handle error report submission
  */
-async function handleErrorReport(request: Request, securityHeaders: Record<string, string>): Promise<Response> {
+async function handleErrorReport(req: Request, service: ErrorReportingService): Promise<Response> {
   try {
-    // Parse request body
-    const body = await request.json();
+    const body = await req.json();
     
-    // Validate error report
-    const validationResult = validation.validateData(ErrorReportSchema, body);
-    
-    if (!validationResult.success) {
+    // Validate request
+    const validation = service['validateErrorReport'](body);
+    if (!validation.isValid) {
       return new Response(
-        JSON.stringify(formatErrorResponse(new ValidationError('Invalid error report data', {
-          context: { errors: validationResult.errors }
-        }))),
+        JSON.stringify({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid error report',
+            details: validation.errors,
+          },
+          timestamp: new Date().toISOString(),
+        }),
         {
           status: 400,
-          headers: {
-            'Content-Type': 'application/json',
-            ...securityHeaders
-          }
+          headers: securityHeaders,
         }
       );
     }
 
-    // Extract context from request
-    const context = {
-      ipAddress: request.headers.get('x-forwarded-for') || 
-                 request.headers.get('x-real-ip'),
-      userAgent: request.headers.get('user-agent'),
-      userId: validationResult.data.userId
-    };
-
-    // Report error
-    const errorReportingService = new ErrorReportingService();
-    const errorId = await errorReportingService.reportError(validationResult.data, context);
+    // Process error report
+    const result = await service.processErrorReport(body);
 
     return new Response(
       JSON.stringify({
         success: true,
-        data: {
-          errorId,
-          message: 'Error report submitted successfully'
-        }
+        fingerprint: result.fingerprint,
+        message: 'Error report processed successfully',
+        timestamp: new Date().toISOString(),
       }),
       {
         status: 201,
         headers: {
-          'Content-Type': 'application/json',
-          ...securityHeaders
-        }
+          ...securityHeaders,
+          'Access-Control-Allow-Origin': '*',
+        },
       }
     );
-
   } catch (error) {
-    if (error instanceof ValidationError) {
-      return new Response(
-        JSON.stringify(formatErrorResponse(error)),
-        {
-          status: 400,
-          headers: {
-            'Content-Type': 'application/json',
-            ...securityHeaders
-          }
-        }
-      );
-    }
-
+    console.error('Error processing error report:', error);
+    
     return new Response(
-      JSON.stringify(formatErrorResponse(new ApiError('Failed to process error report', {
-        code: ErrorCode.INTERNAL_ERROR
-      }))),
+      JSON.stringify({
+        error: {
+          code: 'PROCESSING_ERROR',
+          message: 'Failed to process error report',
+          details: error.message,
+        },
+        timestamp: new Date().toISOString(),
+      }),
       {
         status: 500,
-        headers: {
-          'Content-Type': 'application/json',
-          ...securityHeaders
-        }
+        headers: securityHeaders,
       }
     );
   }
 }
 
 /**
- * Handle error statistics request
+ * Handle get error statistics
  */
-async function handleGetErrorStats(
-  request: Request, 
-  url: URL, 
-  securityHeaders: Record<string, string>
-): Promise<Response> {
+async function handleGetStats(req: Request, service: ErrorReportingService): Promise<Response> {
   try {
-    // Authenticate request (require API key or JWT)
-    const middleware = auth.createMiddleware({
-      strategy: AuthStrategy.JWT_OR_API_KEY,
-      permissions: [
-        { action: 'read', resource: 'error-stats' }
-      ],
-      audit: { logAccess: true }
-    });
+    const url = new URL(req.url);
+    const start = url.searchParams.get('start') || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const end = url.searchParams.get('end') || new Date().toISOString();
+    const module = url.searchParams.get('module') || undefined;
 
-    const authResult = await middleware(request);
-
-    // Get query parameters
-    const timeRange = url.searchParams.get('timeRange') || '24h';
-    const errorId = url.searchParams.get('errorId');
-
-    const errorReportingService = new ErrorReportingService();
-
-    if (errorId) {
-      // Get specific error details
-      const errorDetails = await errorReportingService.getErrorDetails(errorId);
-      
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: errorDetails
-        }),
-        {
-          status: 200,
-          headers: {
-            'Content-Type': 'application/json',
-            ...securityHeaders
-          }
-        }
-      );
-    } else {
-      // Get error statistics
-      const stats = await errorReportingService.getErrorStats(timeRange);
-      
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: stats
-        }),
-        {
-          status: 200,
-          headers: {
-            'Content-Type': 'application/json',
-            ...securityHeaders
-          }
-        }
-      );
-    }
-
-  } catch (error) {
-    if (error instanceof ApiError) {
-      return new Response(
-        JSON.stringify(formatErrorResponse(error)),
-        {
-          status: error.statusCode || 500,
-          headers: {
-            'Content-Type': 'application/json',
-            ...securityHeaders
-          }
-        }
-      );
-    }
+    const stats = await service.getErrorStats({ start, end }, module);
 
     return new Response(
-      JSON.stringify(formatErrorResponse(new ApiError('Failed to get error statistics', {
-        code: ErrorCode.INTERNAL_ERROR
-      }))),
+      JSON.stringify({
+        stats,
+        timestamp: new Date().toISOString(),
+      }),
+      {
+        status: 200,
+        headers: {
+          ...securityHeaders,
+          'Access-Control-Allow-Origin': '*',
+        },
+      }
+    );
+  } catch (error) {
+    console.error('Error getting stats:', error);
+    
+    return new Response(
+      JSON.stringify({
+        error: {
+          code: 'STATS_ERROR',
+          message: 'Failed to get error statistics',
+          details: error.message,
+        },
+        timestamp: new Date().toISOString(),
+      }),
       {
         status: 500,
+        headers: securityHeaders,
+      }
+    );
+  }
+}
+
+/**
+ * Handle get aggregated errors
+ */
+async function handleGetAggregated(req: Request, service: ErrorReportingService): Promise<Response> {
+  try {
+    const url = new URL(req.url);
+    const limit = parseInt(url.searchParams.get('limit') || '50');
+    const module = url.searchParams.get('module') || undefined;
+
+    const aggregated = await service.getAggregatedErrors(limit, module);
+
+    return new Response(
+      JSON.stringify({
+        aggregated,
+        count: aggregated.length,
+        timestamp: new Date().toISOString(),
+      }),
+      {
+        status: 200,
         headers: {
-          'Content-Type': 'application/json',
-          ...securityHeaders
-        }
+          ...securityHeaders,
+          'Access-Control-Allow-Origin': '*',
+        },
+      }
+    );
+  } catch (error) {
+    console.error('Error getting aggregated errors:', error);
+    
+    return new Response(
+      JSON.stringify({
+        error: {
+          code: 'AGGREGATED_ERROR',
+          message: 'Failed to get aggregated errors',
+          details: error.message,
+        },
+        timestamp: new Date().toISOString(),
+      }),
+      {
+        status: 500,
+        headers: securityHeaders,
       }
     );
   }
