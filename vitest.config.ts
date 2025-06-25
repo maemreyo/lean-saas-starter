@@ -55,7 +55,7 @@ export default defineConfig({
     
     // Coverage configuration
     coverage: {
-      provider: 'c8',
+      provider: 'v8',
       reporter: ['text', 'html', 'json-summary', 'json'],
       reportsDirectory: './coverage',
       

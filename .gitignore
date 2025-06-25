@@ -38,3 +38,30 @@ yarn-error.log*
 # Generated files
 packages/db-types/index.ts
 docs/generated/
+
+# Deno
+.deno/
+deno.lock
+.deno_cache/
+
+# IDE
+.vscode/launch.json
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# TypeScript build artifacts
+*.tsbuildinfo
+**/.tsbuildinfo
+**/dist/
+**/build/
+**/*.d.ts
+!packages/*/index.d.ts
+!src/**/*.d.ts
+
+# Generated type definitions (exclude but allow manual ones)
+apps/web/app/*.d.ts
+apps/web/lib/*.d.ts
+packages/ui/dist/

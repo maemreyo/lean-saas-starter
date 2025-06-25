@@ -1,8 +1,8 @@
 // - Enhanced health check with comprehensive service monitoring and error handling
 
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4';
-import Stripe from 'https://esm.sh/stripe@12.18.0?target=deno';
+import { serve } from 'std/http/server.ts';
+import { createClient } from '@supabase/supabase-js';
+import Stripe from 'stripe';
 
 /**
  * Service status enum

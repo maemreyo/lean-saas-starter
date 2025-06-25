@@ -15,7 +15,7 @@
       "default": "./api.ts"
     },
     "./environment": {
-      "types": "./environment.d.ts", 
+      "types": "./environment.d.ts",
       "default": "./environment.ts"
     },
     "./billing": {
@@ -30,8 +30,8 @@
     "README.md"
   ],
   "scripts": {
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
+    "lint": "eslint \"**/*.{ts,js}\" --ignore-pattern dist",
+    "lint:fix": "eslint \"**/*.{ts,js}\" --ignore-pattern dist --fix",
     "typecheck": "tsc --noEmit",
     "build": "echo 'Config package uses TypeScript files directly'",
     "clean": "rimraf dist *.tsbuildinfo"
@@ -41,6 +41,8 @@
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.21.0",
+    "@typescript-eslint/parser": "^6.21.0",
     "eslint": "^8.54.0",
     "rimraf": "^5.0.5",
     "typescript": "^5.3.2"

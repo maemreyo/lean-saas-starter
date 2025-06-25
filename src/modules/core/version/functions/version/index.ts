@@ -1,6 +1,6 @@
 // - Version information endpoint with build details, environment info, and deployment metadata
 
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import { serve } from 'std/http/server.ts';
 
 /**
  * Version information interface

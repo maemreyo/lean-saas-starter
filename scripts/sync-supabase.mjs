@@ -29,16 +29,16 @@ const colors = {
   yellow: '\x1b[33m',
   blue: '\x1b[34m',
   magenta: '\x1b[35m',
-  cyan: '\x1b[36m'
+  cyan: '\x1b[36m',
 };
 
 const log = {
-  info: (msg) => console.log(`${colors.blue}ℹ${colors.reset} ${msg}`),
-  success: (msg) => console.log(`${colors.green}✅${colors.reset} ${msg}`),
-  warning: (msg) => console.log(`${colors.yellow}⚠️${colors.reset} ${msg}`),
-  error: (msg) => console.log(`${colors.red}❌${colors.reset} ${msg}`),
-  step: (msg) => console.log(`${colors.cyan}🔄${colors.reset} ${msg}`),
-  header: (msg) => console.log(`${colors.bright}${colors.magenta}📦 ${msg}${colors.reset}`)
+  info: msg => console.log(`${colors.blue}ℹ${colors.reset} ${msg}`),
+  success: msg => console.log(`${colors.green}✅${colors.reset} ${msg}`),
+  warning: msg => console.log(`${colors.yellow}⚠️${colors.reset} ${msg}`),
+  error: msg => console.log(`${colors.red}❌${colors.reset} ${msg}`),
+  step: msg => console.log(`${colors.cyan}🔄${colors.reset} ${msg}`),
+  header: msg => console.log(`${colors.bright}${colors.magenta}📦 ${msg}${colors.reset}`),
 };
 
 /**
@@ -56,13 +56,13 @@ function ensureDirectoryExists(dirPath) {
  */
 function copyDirectory(src, dest) {
   ensureDirectoryExists(dest);
-  
+
   const entries = fs.readdirSync(src, { withFileTypes: true });
-  
+
   for (const entry of entries) {
     const srcPath = path.join(src, entry.name);
     const destPath = path.join(dest, entry.name);
-    
+
     if (entry.isDirectory()) {
       copyDirectory(srcPath, destPath);
     } else {
@@ -78,7 +78,7 @@ function validateModuleStructure(modulePath, moduleName) {
   const hasValidStructure = {
     migrations: false,
     functions: false,
-    tests: false
+    tests: false,
   };
 
   // Check for migrations directory
@@ -120,13 +120,14 @@ function validateModuleStructure(modulePath, moduleName) {
  */
 function processMigrations(moduleName, migrationsPath, targetDir) {
   log.step(`Processing migrations for module: ${moduleName}`);
-  
+
   if (!fs.existsSync(migrationsPath)) {
     log.info(`  No migrations directory found for ${moduleName}`);
     return 0;
   }
 
-  const migrationFiles = fs.readdirSync(migrationsPath)
+  const migrationFiles = fs
+    .readdirSync(migrationsPath)
     .filter(file => file.endsWith('.sql'))
     .sort(); // Ensure migrations are processed in order
 
@@ -135,7 +136,7 @@ function processMigrations(moduleName, migrationsPath, targetDir) {
   for (const file of migrationFiles) {
     const srcFile = path.join(migrationsPath, file);
     const destFile = path.join(targetDir, `${moduleName}_${file}`);
-    
+
     try {
       fs.copyFileSync(srcFile, destFile);
       log.success(`  ✅ ${file} → ${moduleName}_${file}`);
@@ -149,17 +150,18 @@ function processMigrations(moduleName, migrationsPath, targetDir) {
 }
 
 /**
- * Processes functions for a module
+ * Processes functions for a module with corrected _shared handling
  */
 function processFunctions(moduleName, functionsPath, targetDir) {
   log.step(`Processing functions for module: ${moduleName}`);
-  
+
   if (!fs.existsSync(functionsPath)) {
     log.info(`  No functions directory found for ${moduleName}`);
     return 0;
   }
 
-  const functionDirs = fs.readdirSync(functionsPath, { withFileTypes: true })
+  const functionDirs = fs
+    .readdirSync(functionsPath, { withFileTypes: true })
     .filter(dirent => dirent.isDirectory())
     .map(dirent => dirent.name);
 
@@ -168,13 +170,13 @@ function processFunctions(moduleName, functionsPath, targetDir) {
   for (const funcDir of functionDirs) {
     // Skip _shared directories - they will be handled separately
     if (funcDir.startsWith('_shared')) {
-      log.info(`  Skipping _shared directory: ${funcDir}`);
+      log.info(`  Skipping _shared directory: ${funcDir} (will be handled globally)`);
       continue;
     }
 
     const srcDir = path.join(functionsPath, funcDir);
     const destDir = path.join(targetDir, `${moduleName}_${funcDir}`);
-    
+
     try {
       copyDirectory(srcDir, destDir);
       log.success(`  ✅ ${funcDir}/ → ${moduleName}_${funcDir}/`);
@@ -184,20 +186,71 @@ function processFunctions(moduleName, functionsPath, targetDir) {
     }
   }
 
-  // Handle _shared directory specially
-  const sharedPath = path.join(functionsPath, '_shared');
-  if (fs.existsSync(sharedPath)) {
-    const sharedDestPath = path.join(targetDir, `${moduleName}_shared`);
-    try {
-      copyDirectory(sharedPath, sharedDestPath);
-      log.success(`  ✅ _shared/ → ${moduleName}_shared/`);
-      processedCount++;
-    } catch (error) {
-      log.error(`  Failed to copy _shared: ${error.message}`);
+  return processedCount;
+}
+
+/**
+ * Process all _shared directories globally after all modules
+ */
+function processSharedDirectories(modules, targetDir) {
+  log.header('Processing Global _shared Directories');
+
+  const globalSharedDir = path.join(targetDir, '_shared');
+
+  // Create global _shared directory
+  ensureDirectoryExists(globalSharedDir);
+
+  // Track processed shared files to avoid duplicates
+  const processedFiles = new Set();
+  let totalSharedFiles = 0;
+
+  for (const module of modules) {
+    const moduleDir = path.join(modulesDir, module);
+    const functionsPath = path.join(moduleDir, 'functions');
+    const sharedPath = path.join(functionsPath, '_shared');
+
+    if (!fs.existsSync(sharedPath)) {
+      continue;
+    }
+
+    log.step(`Processing _shared from module: ${module}`);
+
+    // Read all files in _shared directory
+    const sharedFiles = fs.readdirSync(sharedPath, { withFileTypes: true });
+
+    for (const file of sharedFiles) {
+      if (file.isFile()) {
+        const fileName = file.name;
+        const srcFile = path.join(sharedPath, fileName);
+        const destFile = path.join(globalSharedDir, fileName);
+
+        // Check if file already processed
+        if (processedFiles.has(fileName)) {
+          log.warning(
+            `  ⚠️  File ${fileName} already exists in global _shared (from another module)`
+          );
+          continue;
+        }
+
+        try {
+          fs.copyFileSync(srcFile, destFile);
+          processedFiles.add(fileName);
+          log.success(`  ✅ ${fileName} → _shared/${fileName}`);
+          totalSharedFiles++;
+        } catch (error) {
+          log.error(`  Failed to copy ${fileName}: ${error.message}`);
+        }
+      }
     }
   }
 
-  return processedCount;
+  if (totalSharedFiles > 0) {
+    log.success(`✅ Created global _shared directory with ${totalSharedFiles} files`);
+  } else {
+    log.info('No _shared files found to process');
+  }
+
+  return totalSharedFiles;
 }
 
 /**
@@ -205,15 +258,15 @@ function processFunctions(moduleName, functionsPath, targetDir) {
  */
 function cleanupInternalDirectory() {
   log.step('Cleaning up existing _internal directory...');
-  
+
   const migrationsDir = path.join(internalDir, 'migrations');
   const functionsDir = path.join(internalDir, 'functions');
-  
+
   if (fs.existsSync(migrationsDir)) {
     fs.rmSync(migrationsDir, { recursive: true, force: true });
     log.success('Cleaned migrations directory');
   }
-  
+
   if (fs.existsSync(functionsDir)) {
     fs.rmSync(functionsDir, { recursive: true, force: true });
     log.success('Cleaned functions directory');
@@ -225,10 +278,10 @@ function cleanupInternalDirectory() {
  */
 function setupInternalDirectories() {
   log.step('Setting up _internal directories...');
-  
+
   const migrationsDir = path.join(internalDir, 'migrations');
   const functionsDir = path.join(internalDir, 'functions');
-  
+
   ensureDirectoryExists(migrationsDir);
   ensureDirectoryExists(functionsDir);
 }
@@ -238,13 +291,14 @@ function setupInternalDirectories() {
  */
 function discoverModules() {
   log.step('Discovering modules...');
-  
+
   if (!fs.existsSync(modulesDir)) {
     log.error(`Modules directory not found: ${modulesDir}`);
     process.exit(1);
   }
 
-  const modules = fs.readdirSync(modulesDir, { withFileTypes: true })
+  const modules = fs
+    .readdirSync(modulesDir, { withFileTypes: true })
     .filter(dirent => dirent.isDirectory())
     .map(dirent => dirent.name);
 
@@ -258,7 +312,7 @@ function discoverModules() {
 }
 
 /**
- * Main synchronization function
+ * Main synchronization function with global _shared processing
  */
 function syncModules() {
   log.header('Starting Supabase Module Synchronization');
@@ -270,7 +324,7 @@ function syncModules() {
   try {
     // Step 1: Discover modules
     const modules = discoverModules();
-    
+
     if (modules.length === 0) {
       log.warning('No modules to sync. Exiting.');
       return;
@@ -280,41 +334,44 @@ function syncModules() {
     cleanupInternalDirectory();
     setupInternalDirectories();
 
-    // Step 3: Process each module
+    // Step 3: Process each module (excluding _shared)
     const migrationsDir = path.join(internalDir, 'migrations');
     const functionsDir = path.join(internalDir, 'functions');
-    
+
     let totalMigrations = 0;
     let totalFunctions = 0;
 
     for (const module of modules) {
       log.header(`Processing module: ${module}`);
       const moduleDir = path.join(modulesDir, module);
-      
+
       // Validate module structure
       const structure = validateModuleStructure(moduleDir, module);
-      
+
       // Process migrations
       const migrationsPath = path.join(moduleDir, 'migrations');
       const migrationCount = processMigrations(module, migrationsPath, migrationsDir);
       totalMigrations += migrationCount;
-      
-      // Process functions
+
+      // Process functions (excluding _shared)
       const functionsPath = path.join(moduleDir, 'functions');
       const functionCount = processFunctions(module, functionsPath, functionsDir);
       totalFunctions += functionCount;
-      
+
       console.log(''); // Empty line between modules
     }
 
-    // Step 4: Summary
+    // Step 4: Process global _shared directories
+    const sharedCount = processSharedDirectories(modules, functionsDir);
+
+    // Step 5: Summary
     log.header('Synchronization Summary');
     log.success(`✅ Processed ${modules.length} modules`);
     log.success(`✅ Synced ${totalMigrations} migration files`);
     log.success(`✅ Synced ${totalFunctions} function directories`);
+    log.success(`✅ Created global _shared with ${sharedCount} files`);
     log.info('📁 Files synced to supabase/_internal/');
     log.info('🚀 Ready for Supabase CLI commands!');
-
   } catch (error) {
     log.error(`Synchronization failed: ${error.message}`);
     console.error(error.stack);
@@ -329,7 +386,7 @@ function validateEnvironment() {
   // Check if we're in the right directory
   const packageJsonPath = path.join(rootDir, 'package.json');
   if (!fs.existsSync(packageJsonPath)) {
-    log.error('package.json not found. Make sure you\'re running this from the project root.');
+    log.error("package.json not found. Make sure you're running this from the project root.");
     process.exit(1);
   }
 

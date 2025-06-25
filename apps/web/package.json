@@ -15,9 +15,9 @@
     "next": "14.0.3",
     "react": "^18",
     "react-dom": "^18",
-    "ui": "workspace:*",
-    "config": "workspace:*",
-    "db-types": "workspace:*",
+    "@lean-saas/ui": "workspace:*",
+    "@lean-saas/config": "workspace:*",
+    "@lean-saas/db-types": "workspace:*",
     "zod": "^3.22.4"
   },
   "devDependencies": {
